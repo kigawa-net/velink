@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: velink-remote
+  namespace: velink
+spec:
+  # 認証のない開発用サービス。到達範囲を VPN / firewall で制限すること。
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: velink-remote
+  ports:
+    - name: websocket
+      protocol: TCP
+      port: 8080
+      targetPort: websocket
+      nodePort: 30080

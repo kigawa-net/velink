@@ -1,0 +1,282 @@
+# Lease は管理者が作成し、補助コンテナにはこの Lease の更新だけを許可する。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: velink-remote
+  namespace: velink
+automountServiceAccountToken: false
+---
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: velink-remote-leader
+  namespace: velink
+spec:
+  leaseDurationSeconds: 15
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: velink-remote-leader
+  namespace: velink
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [velink-remote-leader]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: velink-remote-leader
+  namespace: velink
+subjects:
+  - kind: ServiceAccount
+    name: velink-remote
+    namespace: velink
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: velink-remote-leader
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: velink-remote-election
+  namespace: velink
+data:
+  election.py: |
+    """Lease election gates Service readiness; it does not fence existing sessions."""
+    import datetime
+    import json
+    import os
+    import ssl
+    import threading
+    import time
+    import urllib.request
+    import uuid
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+
+    token_dir = Path('/var/run/secrets/kubernetes.io/serviceaccount')
+    host = os.environ['KUBERNETES_SERVICE_HOST']
+    if ':' in host:
+        host = '[' + host + ']'
+    base = 'https://' + host + ':' + os.environ['KUBERNETES_SERVICE_PORT_HTTPS']
+    url = (base + '/apis/coordination.k8s.io/v1/namespaces/'
+           + os.environ['POD_NAMESPACE'] + '/leases/velink-remote-leader')
+    context = ssl.create_default_context(cafile=str(token_dir / 'ca.crt'))
+    identity = os.environ['POD_UID'] + '/' + str(uuid.uuid4())
+    lease_seconds, renew_deadline, retry_seconds = 15, 10, 2
+    ready_until = 0.0
+    last_loop = time.monotonic()
+
+    class Health(BaseHTTPRequestHandler):
+        def do_GET(self):
+            now = time.monotonic()
+            healthy = (now < ready_until if self.path == '/readyz'
+                       else now - last_loop < renew_deadline)
+            self.send_response(200 if healthy else 503)
+            self.end_headers()
+        def log_message(self, *args):
+            pass
+
+    def request(method, body=None):
+        # Read the projected token for each request to support token rotation.
+        headers = {'Authorization': 'Bearer ' + (token_dir / 'token').read_text().strip(),
+                   'Content-Type': 'application/json'}
+        data = None if body is None else json.dumps(body).encode()
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(req, context=context, timeout=2) as response:
+            return json.load(response)
+
+    threading.Thread(target=ThreadingHTTPServer(('0.0.0.0', 8081), Health).serve_forever,
+                     daemon=True).start()
+    observed, observed_since = None, time.monotonic()
+    while True:
+        try:
+            lease = request('GET')
+            spec = lease.get('spec', {})
+            record = json.dumps(spec, sort_keys=True)
+            now = time.monotonic()
+            if record != observed:
+                observed, observed_since = record, now
+            holder = spec.get('holderIdentity')
+            # Observe an unchanged lease for its full duration; no shared clock required.
+            expired = now - observed_since >= spec.get('leaseDurationSeconds', lease_seconds)
+            if not holder or holder == identity or expired:
+                stamp = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
+                if holder != identity:
+                    spec['acquireTime'] = stamp
+                    spec['leaseTransitions'] = spec.get('leaseTransitions', 0) + 1
+                spec.update(holderIdentity=identity, leaseDurationSeconds=lease_seconds,
+                            renewTime=stamp)
+                lease['spec'] = spec
+                started = time.monotonic()
+                # Preserve resourceVersion: competing updates fail with HTTP 409.
+                updated = request('PUT', lease)
+                observed = json.dumps(updated['spec'], sort_keys=True)
+                observed_since = time.monotonic()
+                ready_until = started + renew_deadline
+            else:
+                ready_until = 0.0
+        except Exception as error:
+            # Fail closed on API errors, conflict, deletion or loss of permissions.
+            ready_until = 0.0
+            print('leader election:', error, flush=True)
+        last_loop = time.monotonic()
+        time.sleep(retry_seconds)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: velink-remote
+  namespace: velink
+  labels:
+    app.kubernetes.io/name: velink-remote
+    app.kubernetes.io/part-of: velink
+spec:
+  serviceAccountName: velink-remote
+  automountServiceAccountToken: false
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 15
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: desktop
+      image: velink-remote:dev
+      imagePullPolicy: IfNotPresent
+      ports:
+        - name: websocket
+          containerPort: 8080
+          protocol: TCP
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: VELINK_LISTEN
+          value: 0.0.0.0:8080
+        - name: VELINK_DISPLAY
+          value: "99"
+        - name: VELINK_WIDTH
+          value: "1280"
+        - name: VELINK_HEIGHT
+          value: "720"
+        - name: VELINK_VNC_PORT
+          value: "5900"
+        - name: VELINK_DESKTOP_COMMAND
+          value: startxfce4
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: "2"
+          memory: 2Gi
+      startupProbe:
+        httpGet:
+          path: /healthz
+          port: websocket
+        periodSeconds: 2
+        timeoutSeconds: 2
+        failureThreshold: 30
+      readinessProbe:
+        httpGet:
+          path: /healthz
+          port: websocket
+        periodSeconds: 5
+        timeoutSeconds: 2
+        failureThreshold: 1
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: websocket
+        periodSeconds: 10
+        timeoutSeconds: 2
+        failureThreshold: 3
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: shm
+          mountPath: /dev/shm
+    # 通常の containers を使い、Kubernetes 1.25 でも動作させる。
+    - name: leader-election
+      image: python:3.13-slim-bookworm
+      imagePullPolicy: IfNotPresent
+      command: [python3, -B, /election/election.py]
+      env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+      ports:
+        - name: election-health
+          containerPort: 8081
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+      readinessProbe:
+        httpGet:
+          path: /readyz
+          port: election-health
+        periodSeconds: 1
+        timeoutSeconds: 1
+        failureThreshold: 1
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: election-health
+        periodSeconds: 5
+        timeoutSeconds: 1
+        failureThreshold: 3
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: election
+          mountPath: /election
+          readOnly: true
+        - name: api-access
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+  volumes:
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 256Mi
+    - name: election
+      configMap:
+        name: velink-remote-election
+    - name: api-access
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 3600
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+                - key: ca.crt
+                  path: ca.crt

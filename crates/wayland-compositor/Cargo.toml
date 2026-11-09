@@ -1,0 +1,12 @@
+[package]
+name = "wayland-compositor"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+velink-core.workspace = true
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
+calloop = "0.14"
+wayland-protocols = { version = "0.32", features = ["server"] }

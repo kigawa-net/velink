@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/velink-core",
+    "crates/wayland-compositor",
+    "apps/desktop",
+    "crates/velink-remote",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+
+[workspace.dependencies]
+velink-core = { path = "crates/velink-core" }
+wayland-compositor = { path = "crates/wayland-compositor" }
+tokio = { version = "=1.43.0", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+tokio-tungstenite = "=0.26.2"
+futures-util = { version = "=0.3.31", features = ["sink"] }
