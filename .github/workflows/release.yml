@@ -2,70 +2,75 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            binary: velink-desktop
-            archive: velink-linux-x86_64.tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            binary: velink-desktop.exe
-            archive: velink-windows-x86_64.zip
+  build-and-release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    env:
+      HARBOR_USER: robot$kigawa-net
+      DOCKER_REPOSITORY: harbor.kigawa.net/private/velink
+      IMAGE_NAME: velink-remote
+      MANIFEST_REPO: kigawa-net-k8s
+      MANIFEST_FILE: kigawa-net-k8s/velink/velink.yaml
+      YAML_PATH: 'select(documentIndex == 5).spec.template.spec.containers[0].image'
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Harbor
+        uses: docker/login-action@v3
         with:
-          targets: ${{ matrix.target }}
+          registry: harbor.kigawa.net
+          username: ${{ env.HARBOR_USER }}
+          password: ${{ secrets.HARBOR_PASS }}
 
-      - name: Build release binary
-        run: cargo build --locked --release --package velink-desktop --target ${{ matrix.target }}
-
-      - name: Package Linux binary
-        if: runner.os == 'Linux'
-        shell: bash
-        run: tar -C target/${{ matrix.target }}/release -czf ${{ matrix.archive }} ${{ matrix.binary }}
-
-      - name: Package Windows binary
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.binary }}" -DestinationPath "${{ matrix.archive }}"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v6
         with:
-          name: ${{ matrix.archive }}
-          path: ${{ matrix.archive }}
-          if-no-files-found: error
+          images: ${{ env.DOCKER_REPOSITORY }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix={{date 'Y'}}{{date 'm'}}{{date 'd'}}-
 
-  publish:
-    name: Publish GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download packaged binaries
-        uses: actions/download-artifact@v4
+      - name: Build and push
+        uses: docker/build-push-action@v5
         with:
-          path: release-assets
-          merge-multiple: true
+          context: .
+          file: crates/velink-remote/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ github.ref_name }}
-        run: gh release create "$TAG_NAME" release-assets/* --title "$TAG_NAME" --generate-notes
+      - name: Checkout k8s manifests
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MANIFEST_REPO }}
+          token: ${{ secrets.GIT_TOKEN }}
+          path: k8s-manifests
+
+      - name: Update image tag in manifest
+        run: |
+          cd k8s-manifests
+          IMG="${{ env.DOCKER_REPOSITORY }}:sha-${{ github.sha }}"
+          yq -i '${{ env.YAML_PATH }} = env(IMG)' ${{ env.MANIFEST_FILE }}
+          echo "Updated image to: $IMG"
+
+      - name: Commit and push
+        run: |
+          cd k8s-manifests
+          git config user.name github-actions
+          git config user.email github-actions@kigawa.net
+          git add .
+          git commit -m "update velink-remote image to sha-${{ github.sha }} [skip ci]" || echo "No changes to commit"
+          git push
