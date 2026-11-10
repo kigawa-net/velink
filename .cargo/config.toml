@@ -1,0 +1,3 @@
+[resolver]
+# Resolve new dependencies against each package's declared Rust 1.85 minimum.
+incompatible-rust-versions = "fallback"
