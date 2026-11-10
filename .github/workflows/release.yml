@@ -16,7 +16,7 @@ jobs:
       HARBOR_USER: robot$kigawa-net
       DOCKER_REPOSITORY: harbor.kigawa.net/private/velink
       IMAGE_NAME: velink-remote
-      MANIFEST_REPO: kigawa-net-k8s
+      MANIFEST_REPO: kigawa-net/kigawa-net-k8s
       MANIFEST_FILE: kigawa-net-k8s/velink/velink.yaml
       YAML_PATH: 'select(documentIndex == 5).spec.template.spec.containers[0].image'
     steps:
