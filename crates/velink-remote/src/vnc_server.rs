@@ -58,6 +58,7 @@ impl VncServer {
         }
         // Debian calls the TigerVNC scraping server x0vncserver.
         server.spawn(Command::new("x0vncserver").args([
+            "-fg",
             "-display",
             &display,
             "-rfbport",
