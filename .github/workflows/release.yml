@@ -37,7 +37,7 @@ jobs:
           images: ${{ env.DOCKER_REPOSITORY }}
           tags: |
             type=raw,value=latest
-            type=sha,prefix={{date 'Y'}}{{date 'm'}}{{date 'd'}}-
+            type=raw,value=main-{{sha}}
 
       - name: Build and push
         uses: docker/build-push-action@v5
