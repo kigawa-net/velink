@@ -13,7 +13,7 @@ jobs:
     name: Build & Push
     runs-on: ubuntu-latest
     env:
-      HARBOR_USER: robot$kigawa-net
+      HARBOR_USER: kigawa
       DOCKER_REPOSITORY: harbor.kigawa.net/private/velink
       IMAGE_NAME: velink-remote
     steps:
