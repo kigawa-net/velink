@@ -20,6 +20,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libxkbcommon-dev
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
