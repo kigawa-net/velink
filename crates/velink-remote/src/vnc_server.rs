@@ -1,4 +1,5 @@
 use std::{
+    env,
     io,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -12,6 +13,59 @@ pub struct VncServer {
 }
 
 impl VncServer {
+    fn ensure_lease(config: &KubernetesConfig) -> io::Result<()> {
+        let token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token";
+        if !std::path::Path::new(token_path).exists() {
+            return Ok(());
+        }
+        let mut host = env::var("KUBERNETES_SERVICE_HOST")
+            .map_err(|e| io::Error::other(format!("Kubernetes API host: {e}")))?;
+        if host.contains(':') && !host.starts_with('[') {
+            host = format!("[{host}]");
+        }
+        let port = env::var("KUBERNETES_SERVICE_PORT_HTTPS").unwrap_or_else(|_| "443".into());
+        let api = format!("https://{host}:{port}/apis/coordination.k8s.io/v1/namespaces/{}/leases", config.namespace);
+        let lease_url = format!("{api}/velink-remote-leader");
+        let ca = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
+        let token = std::fs::read_to_string(token_path)?;
+        let get = Command::new("curl")
+            .args(["--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{http_code}",
+                   "--cacert", ca, "-H"])
+            .arg(format!("Authorization: Bearer {}", token.trim()))
+            .arg(&lease_url)
+            .output()?;
+        if !get.status.success() {
+            return Err(io::Error::other(format!("Kubernetes Lease GET failed: {}", String::from_utf8_lossy(&get.stderr))));
+        }
+        let status = String::from_utf8_lossy(&get.stdout);
+        if status.trim() != "404" {
+            if status.starts_with('2') {
+                return Ok(());
+            }
+            return Err(io::Error::other(format!("Kubernetes Lease GET returned {status}")));
+        }
+        let stamp = Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output()?;
+        if !stamp.status.success() {
+            return Err(io::Error::other("could not read UTC time for Kubernetes Lease"));
+        }
+        let stamp = String::from_utf8_lossy(&stamp.stdout).trim().to_owned();
+        let holder = env::var("HOSTNAME").unwrap_or_else(|_| "velink-remote".into());
+        let namespace = &config.namespace;
+        let body = format!(r#"{{"apiVersion":"coordination.k8s.io/v1","kind":"Lease","metadata":{{"name":"velink-remote-leader","namespace":"{namespace}"}},"spec":{{"holderIdentity":"{holder}","leaseDurationSeconds":15,"renewTime":"{stamp}","acquireTime":"{stamp}","leaseTransitions":1}}}}"#);
+        let post = Command::new("curl")
+            .args(["--silent", "--show-error", "--output", "/dev/null", "--write-out", "%{http_code}",
+                   "--cacert", ca, "-H"])
+            .arg(format!("Authorization: Bearer {}", token.trim()))
+            .args(["-H", "Content-Type: application/json", "-X", "POST", "--data"])
+            .arg(body)
+            .arg(&api)
+            .output()?;
+        if !post.status.success() || !String::from_utf8_lossy(&post.stdout).starts_with('2') {
+            return Err(io::Error::other(format!("Kubernetes Lease POST failed: {} {}", String::from_utf8_lossy(&post.stdout), String::from_utf8_lossy(&post.stderr))));
+        }
+        Ok(())
+    }
+
     fn spawn(&mut self, command: &mut Command) -> io::Result<()> {
         #[cfg(unix)]
         {
@@ -24,6 +78,7 @@ impl VncServer {
 
     pub fn start(config: &KubernetesConfig) -> io::Result<Self> {
         config.validate().map_err(io::Error::other)?;
+        Self::ensure_lease(config)?;
         let mut server = Self::default();
         let display = format!(":{}", config.display);
         let geometry = format!("{}x{}x24", config.width, config.height);
