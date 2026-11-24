@@ -183,6 +183,85 @@ cargo run -p velink-desktop -- remote ws://LB_ADDRESS:8080/vnc
 
 ## トラブルシューティング
 
+### 動作確認
+
+NodePort `30080` へ接続するときは、`kubectl get nodes -o wide` で確認した
+クラスタのノード IP を使用します。`kubectl port-forward` を併用している場合は
+手元のホスト IP からも到達できますが、port-forward を実行しているプロセスが
+終了すると接続が拒否されます。手元のホスト IP がクラスタのノード IP とは限りません。
+
+まず、ノード IP を指定して HTTP ヘルスチェックが `200` を返すことを確認します。
+
+```bash
+kubectl get nodes -o wide
+curl -s -o /dev/null -w "%{http_code}\n" http://<ノードIP>:30080/healthz
+```
+
+WebSocket は RFC 6455 のハンドシェイクを確認します。`curl` で確認する場合は
+`Sec-WebSocket-Version: 13` と `Sec-WebSocket-Key` を含む正しい Upgrade ヘッダーが
+必要です。これらを付けない通常の `curl` は `000` になりますが、異常を示すものでは
+ありません。次の Python スクリプトはハンドシェイクの応答と最初のフレームを確認し、
+1 接続目を保持したまま 2 接続目が `409 Conflict` になることも確認します。
+
+```python3
+import base64
+import os
+import socket
+
+host = "<ノードIP>"
+port = 30080
+
+def connect():
+    sock = socket.create_connection((host, port), timeout=5)
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    request = (
+        f"GET /vnc HTTP/1.1\r\nHost: {host}:{port}\r\n"
+        "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    )
+    sock.sendall(request.encode("ascii"))
+    response = bytearray()
+    while b"\r\n\r\n" not in response:
+        response.extend(sock.recv(1))
+    headers, remainder = bytes(response).split(b"\r\n\r\n", 1)
+    return sock, headers.decode("ascii"), remainder
+
+first, headers, data = connect()
+print(headers.splitlines()[0])
+assert "101 Switching Protocols" in headers.splitlines()[0]
+
+# WebSocket フレームのヘッダーを読み、最初のバイナリペイロードを表示します。
+while len(data) < 2:
+    data += first.recv(4096)
+length = data[1] & 0x7f
+offset = 2
+if length == 126:
+    while len(data) < 4:
+        data += first.recv(4096)
+    length = int.from_bytes(data[2:4], "big")
+    offset = 4
+elif length == 127:
+    while len(data) < 10:
+        data += first.recv(4096)
+    length = int.from_bytes(data[2:10], "big")
+    offset = 10
+while len(data) < offset + length:
+    data += first.recv(4096)
+payload = data[offset:offset + length]
+print("first frame:", payload[:12].decode("ascii", errors="replace"))
+assert payload.startswith(b"RFB 003.008")
+
+second, second_headers, _ = connect()
+print(second_headers.splitlines()[0])
+assert "409 Conflict" in second_headers.splitlines()[0]
+second.close()
+first.close()
+```
+
+最初の接続では `101 Switching Protocols` と、最初のバイナリフレーム内の
+`RFB 003.008` バナーを確認できます。2 本目の同時接続は `409 Conflict` になります。
+これは 1 Pod につき 1 接続の設計によるものです。
+
 まずイベントと各コンテナのログを確認します。
 
 ```sh
