@@ -181,9 +181,7 @@ kubectl -n velink get service velink-remote --watch
 cargo run -p velink-desktop -- remote ws://LB_ADDRESS:8080/vnc
 ```
 
-## トラブルシューティング
-
-### 動作確認
+## 動作確認
 
 NodePort `30080` へ接続するときは、`kubectl get nodes -o wide` で確認した
 クラスタのノード IP を使用します。`kubectl port-forward` を併用している場合は
@@ -261,6 +259,8 @@ first.close()
 最初の接続では `101 Switching Protocols` と、最初のバイナリフレーム内の
 `RFB 003.008` バナーを確認できます。2 本目の同時接続は `409 Conflict` になります。
 これは 1 Pod につき 1 接続の設計によるものです。
+
+## トラブルシューティング
 
 まずイベントと各コンテナのログを確認します。
 
