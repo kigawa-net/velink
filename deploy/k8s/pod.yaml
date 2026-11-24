@@ -92,13 +92,14 @@ data:
                    'Content-Type': 'application/json'}
         data = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request(request_url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req, context=context, timeout=2) as response:
+        with urllib.request.urlopen(req, context=context, timeout=4) as response:
             return json.load(response)
 
     threading.Thread(target=ThreadingHTTPServer(('0.0.0.0', 8081), Health).serve_forever,
                      daemon=True).start()
     observed, observed_since = None, time.monotonic()
     while True:
+        t0 = time.monotonic()
         try:
             try:
                 lease = request('GET')
@@ -140,7 +141,7 @@ data:
         except Exception as error:
             # Fail closed on API errors, conflict, deletion or loss of permissions.
             ready_until = 0.0
-            print('leader election:', error, flush=True)
+            print('leader election:', type(error).__name__, error, round(time.monotonic() - t0, 2), flush=True)
         last_loop = time.monotonic()
         time.sleep(retry_seconds)
 ---
@@ -261,7 +262,7 @@ spec:
           port: election-health
         periodSeconds: 1
         timeoutSeconds: 1
-        failureThreshold: 1
+        failureThreshold: 3
       livenessProbe:
         httpGet:
           path: /healthz
