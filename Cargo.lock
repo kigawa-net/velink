@@ -1056,11 +1056,11 @@ checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
 name = "velink-core"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "velink-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "minifb",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "velink-remote"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "libc",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "wayland-compositor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "calloop",
  "smithay",
