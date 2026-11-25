@@ -1,11 +1,11 @@
 //! RFB 3.8 viewer: raw 32-bit pixels over binary WebSocket messages.
 use futures_util::{SinkExt, StreamExt};
-use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
+use minifb::{Key, MouseButton, MouseMode, ScaleMode, Window, WindowOptions};
 use std::{
     collections::HashMap,
     error::Error,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -393,9 +393,42 @@ pub fn run(endpoint: &str, credentials: Option<Credentials>) -> std::result::Res
 }
 
 fn display(state: State, send: mpsc::Sender<Vec<u8>>) -> Result<()> {
-    let mut window = Window::new("Velink — Connecting", 640, 360, WindowOptions::default())?;
+    // Wait for the negotiated resolution before creating the window. Replacing a
+    // visible window with a new one (the previous behaviour) resets its position
+    // to the primary monitor and makes the window jump between displays.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let (width, height) = loop {
+        {
+            let shared = state.lock().unwrap();
+            match &shared.session.state {
+                VncConnectionState::Failed(error) => return Err(error.clone().into()),
+                VncConnectionState::Disconnected => {
+                    return Err("remote desktop disconnected".into());
+                }
+                VncConnectionState::Connected { width, height } => break (*width, *height),
+                _ => {}
+            }
+        }
+        if Instant::now() > deadline {
+            return Err("timed out waiting for the remote desktop".into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // A resizable window with aspect-preserving scaling lets the user move or
+    // resize it onto monitors of any resolution; minifb scales the framebuffer.
+    let options = WindowOptions {
+        resize: true,
+        scale_mode: ScaleMode::AspectRatioStretch,
+        ..WindowOptions::default()
+    };
+    let mut window = Window::new(
+        "Velink — Remote desktop",
+        width as usize,
+        height as usize,
+        options,
+    )?;
     window.set_target_fps(60);
-    let mut dimensions = (0, 0);
+    let mut dimensions = (width, height);
     let mut pressed = HashMap::new();
     let mut pointer = (0u8, 0u16, 0u16);
     let transmit = |message| {
@@ -411,16 +444,9 @@ fn display(state: State, send: mpsc::Sender<Vec<u8>>) -> Result<()> {
                     return Err("remote desktop disconnected".into());
                 }
                 VncConnectionState::Connected { width, height } => {
-                    if dimensions != (*width, *height) {
-                        window = Window::new(
-                            "Velink — Remote desktop",
-                            *width as usize,
-                            *height as usize,
-                            WindowOptions::default(),
-                        )?;
-                        window.set_target_fps(60);
-                        dimensions = (*width, *height);
-                    }
+                    // A server-side resolution change keeps the same window and
+                    // is scaled by minifb instead of being recreated.
+                    dimensions = (*width, *height);
                     window.update_with_buffer(
                         &shared.frame.pixels,
                         *width as usize,
@@ -477,9 +503,14 @@ fn display(state: State, send: mpsc::Sender<Vec<u8>>) -> Result<()> {
             }
             continue;
         }
-        if let Some((x, y)) = window.get_mouse_pos(MouseMode::Clamp) {
-            let x = (x as u16).min(dimensions.0 - 1);
-            let y = (y as u16).min(dimensions.1 - 1);
+        if let Some((x, y)) = window.get_mouse_pos(MouseMode::Discard) {
+            // The window may be resized or scaled to a different display; map
+            // window pixels back to framebuffer pixels before sending them.
+            let (window_width, window_height) = window.get_size();
+            let scale_x = dimensions.0 as f32 / window_width.max(1) as f32;
+            let scale_y = dimensions.1 as f32 / window_height.max(1) as f32;
+            let x = ((x * scale_x) as u16).min(dimensions.0.saturating_sub(1));
+            let y = ((y * scale_y) as u16).min(dimensions.1.saturating_sub(1));
             let mask = u8::from(window.get_mouse_down(MouseButton::Left))
                 | (u8::from(window.get_mouse_down(MouseButton::Middle)) << 1)
                 | (u8::from(window.get_mouse_down(MouseButton::Right)) << 2);

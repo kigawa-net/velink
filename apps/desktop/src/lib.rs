@@ -1,11 +1,13 @@
 mod auth;
 mod endpoint;
+mod platform;
 mod remote_client;
 mod settings_gui;
 
 use velink_core::{BrowserKind, BrowserLaunch, launch_local_browser};
 
 pub fn run() -> Result<(), String> {
+    platform::enable_dpi_awareness();
     let mut args = std::env::args().skip(1);
     let first = args.next();
     if first.as_deref() == Some("settings") {
@@ -91,5 +93,6 @@ pub fn run() -> Result<(), String> {
 
 /// Open settings without starting a remote session.
 pub fn open_settings() -> Result<(), String> {
+    platform::enable_dpi_awareness();
     settings_gui::open(endpoint::default_config_path()).map(|_| ())
 }
