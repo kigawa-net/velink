@@ -71,28 +71,34 @@ Kubernetes が Pod のコンテナを再起動する。SIGTERM / Ctrl+C で所�
 GitHub Release の最新版から `velink_*-setup.exe`（NSIS インストーラー）をダウンロードして実行する。
 `v*` タグの push 時に Release へ自動添付される。タグ前でも Actions の `Release` ワークフローの
 成果物 `velink-windows-installer` から取得できる。インストール後はスタートメニューの
-「velink」から起動する。
+「velink」から接続し、「velink Settings」から設定を開く。
 
 インストーラーは署名されていないため、初回実行時に Windows SmartScreen の警告が表示される。
 「詳細情報」→「実行」で続行する。
 
-### 接続先の指定
+### 接続先の指定と設定画面
 
-優先順位は次のとおり。
+コマンドライン引数 `velink-desktop remote ws://host:port/vnc` または
+`velink-desktop remote wss://host/vnc` を指定すると、その URL が優先される。
+URL を省略すると設定ファイルの `endpoint` が使われる。
 
-1. コマンドライン引数 `remote ws://host:port/vnc` または `remote wss://host/vnc`（ショートカットのリンク先に
-   `"C:\...\velink.exe" remote ws://host:port/vnc` と追記する）
-2. 設定ファイル `%APPDATA%\velink\config.toml`
+引数なし、または `remote` のみで起動し、設定に `endpoint` が無い場合は
+設定ウィンドウが自動で開く。**Save** で保存して接続し、**Cancel** または
+ウィンドウを閉じると終了する。ウィンドウを起動できない環境ではコンソールで URL を尋ねる。
+コンソールで入力した有効な URL も保存する。保存に失敗した場合は警告を出して接続を続ける。
 
-   ```toml
-   endpoint = "ws://host:port/vnc"
-   ```
+設定済みの URL や Keycloak の項目は `velink-desktop settings`、または Windows の
+スタートメニューの **velink Settings** から編集できる。この方法で開いた場合は保存しても接続を開始しない。
+設定ウィンドウの **Endpoint** には `ws://…/vnc` または `wss://…/vnc` を入力する。
+**Issuer**、**Client ID**、**Scope** は Keycloak の設定。保存できない場合は画面内にエラーが表示される。
 
-3. 上記が無い場合は起動時にコンソールで `velink server URL (ws://host:port/vnc or wss://host/vnc): ` と URL を尋ねる。
+設定ファイルは Windows では `%APPDATA%\velink\config.toml`、Linux では
+`$XDG_CONFIG_HOME/velink/config.toml`（未設定なら `~/.config/velink/config.toml`）。
+Linux で作成・更新したファイルの権限は 0600。設定ファイルは直接編集することもできる。
 
-引数なし、または `remote` のみで起動した場合も同じ順で解決する。URL が `ws://…/vnc` または `wss://…/vnc` 形式でなければ
-エラーで終了する。Linux では設定ファイルは `$XDG_CONFIG_HOME/velink/config.toml`
-（未設定なら `~/.config/velink/config.toml`）。
+```toml
+endpoint = "ws://host:port/vnc"
+```
 
 ### wss:// と Keycloak ログイン（Device Flow）
 
@@ -101,7 +107,7 @@ Keycloak の Device Authorization Grant (RFC 8628) でログインし、WebSocke
 `Authorization: Bearer <access_token>` を付ける。
 
 ```sh
-velink remote wss://velink.kigawa.net/vnc
+velink-desktop remote wss://velink.kigawa.net/vnc
 ```
 
 初回手順:
@@ -116,7 +122,8 @@ velink remote wss://velink.kigawa.net/vnc
 
 トークンの保存先: `%APPDATA%\velink\token.json`（Linux: `$XDG_CONFIG_HOME/velink/token.json`、
 未設定なら `~/.config/velink/token.json`、権限 0600）。`access_token` / `refresh_token` は画面やログに出力しない。
-ログアウトは `token.json` の削除。
+設定画面の **Delete saved token** で `token.json` を削除できる。結果は画面内に表示され、
+次回の `wss://` 接続時にログインを求められる。
 
 Keycloak 設定（public client、`client_secret` は不要。環境変数が設定ファイルより優先）:
 
@@ -124,7 +131,7 @@ Keycloak 設定（public client、`client_secret` は不要。環境変数が設
 | --- | --- | --- | --- |
 | issuer | `VELINK_ISSUER` | `issuer` | `https://user.kigawa.net/realms/develop` |
 | client_id | `VELINK_CLIENT_ID` | `client_id` | `velink-desktop` |
-| scope | — | `scope` | `openid profile email` |
+| scope | — | `scope` | `openid offline_access` |
 
 Keycloak 側でクライアントの OAuth 2.0 Device Authorization Grant を有効にしておくこと。
 
@@ -140,3 +147,5 @@ cargo install cargo-packager --locked
 cargo build -p velink-desktop --release --locked
 cargo packager -p velink-desktop --release --formats nsis
 ```
+
+インストーラーには `velink-desktop.exe` と `velink-settings.exe` が含まれる。

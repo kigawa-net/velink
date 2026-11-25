@@ -1,0 +1,41 @@
+name: Refresh Cargo.lock
+
+# 依存を追加したコミットで Cargo.lock を更新し忘れたとき用の手動ワークフロー。
+# 実行すると cargo check で Cargo.lock を再生成し、差分があれば main に push する。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    name: Refresh lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libxkbcommon-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Regenerate Cargo.lock
+        run: cargo check --workspace
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock is already up to date"
+            exit 0
+          fi
+          git config user.name "velink-lock-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "chore: refresh Cargo.lock"
+          git push

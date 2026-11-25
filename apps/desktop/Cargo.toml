@@ -4,8 +4,12 @@ version = "0.1.2"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+default-run = "velink-desktop"
 
 [dependencies]
+eframe = { version = "=0.31.1", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+fs2 = "=0.4.3"
+tempfile = "=3.27.0"
 velink-core.workspace = true
 tokio.workspace = true
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
@@ -29,3 +33,12 @@ description = "velink remote desktop viewer"
 authors = ["kigawa"]
 out-dir = "dist"
 icons = ["icon.ico"]
+resources = ["icon.ico"]
+binaries = [
+    { path = "velink-desktop", main = true },
+    { path = "velink-settings", main = false },
+]
+
+[package.metadata.packager.nsis]
+template = "installer.nsi"
+installer-icon = "icon.ico"

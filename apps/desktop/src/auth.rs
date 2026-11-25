@@ -1,5 +1,6 @@
 //! OIDC Device Authorization Grant (RFC 8628) against Keycloak, with token persistence.
 //! Only used for `wss://` endpoints. Tokens are never printed or logged.
+use crate::endpoint::config_string;
 use serde::{Deserialize, Serialize};
 use std::{
     io::Write,
@@ -9,7 +10,7 @@ use std::{
 
 pub const DEFAULT_ISSUER: &str = "https://user.kigawa.net/realms/develop";
 pub const DEFAULT_CLIENT_ID: &str = "velink-desktop";
-pub const DEFAULT_SCOPE: &str = "openid profile email";
+pub const DEFAULT_SCOPE: &str = "openid offline_access";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Refresh this long before the access token actually expires.
 const REFRESH_MARGIN_SECS: u64 = 30;
@@ -31,25 +32,6 @@ impl Default for AuthConfig {
     }
 }
 
-fn toml_string(text: &str, wanted: &str) -> Option<String> {
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        if key.trim() != wanted {
-            continue;
-        }
-        let value = value.trim().strip_prefix('"')?;
-        let end = value.find('"')?;
-        return Some(value[..end].to_owned());
-    }
-    None
-}
-
 impl AuthConfig {
     /// Priority: environment > config file (`issuer`, `client_id`, `scope`) > defaults.
     pub fn resolve(
@@ -58,7 +40,7 @@ impl AuthConfig {
         env_client_id: Option<&str>,
     ) -> Self {
         let mut c = Self::default();
-        let file = |k: &str| config_text.and_then(|t| toml_string(t, k));
+        let file = |k: &str| config_text.and_then(|t| config_string(t, k));
         let pick = |env: Option<&str>, k: &str, dst: &mut String| {
             if let Some(v) = env
                 .filter(|v| !v.is_empty())
