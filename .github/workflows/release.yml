@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions:
@@ -36,7 +37,8 @@ jobs:
         with:
           images: ${{ env.DOCKER_REPOSITORY }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
             type=raw,value=main-{{sha}}
 
       - name: Build and push
@@ -54,9 +56,11 @@ jobs:
           echo "=== Image pushed ==="
           echo "Repository: ${{ env.DOCKER_REPOSITORY }}"
           echo "Commit SHA: ${{ github.sha }}"
+          echo "Ref: ${{ github.ref_name }}"
           echo "Tags: ${{ steps.meta.outputs.tags }}"
           echo ""
           echo "=== Next steps ==="
-          echo "1. Update k8s manifest image field to:"
-          echo "   ${{ env.DOCKER_REPOSITORY }}:sha-${{ github.sha }}"
+          echo "1. Update k8s manifest image field to one of the pushed tags:"
+          echo "   - version tag push (vX.Y.Z): ${{ env.DOCKER_REPOSITORY }}:X.Y.Z"
+          echo "   - main push: ${{ env.DOCKER_REPOSITORY }}:main-<short SHA (7 chars)>"
           echo "2. Apply via kubectl or ArgoCD"
