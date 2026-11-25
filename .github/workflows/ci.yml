@@ -15,12 +15,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes libxkbcommon-dev
 
       - name: Install Rust toolchain
@@ -30,10 +31,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check workspace
+        if: runner.os == 'Linux'
         run: cargo check --workspace --locked
 
       - name: Run tests
+        if: runner.os == 'Linux'
         run: cargo test --workspace --locked
 
       - name: Build release binaries
+        if: runner.os == 'Linux'
         run: cargo build --workspace --release --locked
+
+      - name: Check desktop (Windows)
+        if: runner.os == 'Windows'
+        run: cargo check -p velink-desktop -p velink-core --locked
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test -p velink-desktop -p velink-core --locked

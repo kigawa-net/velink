@@ -63,3 +63,46 @@ Kubernetes が Pod のコンテナを再起動する。SIGTERM / Ctrl+C で所�
 
 プロトコル仕様: [RFB 3.8 (RFC 6143)](https://www.rfc-editor.org/rfc/rfc6143.html)、
 サーバーオプション: [TigerVNC x0vncserver](https://tigervnc.org/doc/x0vncserver.html)。
+
+## Windows クライアント
+
+### インストール
+
+GitHub Release の最新版から `velink_*-setup.exe`（NSIS インストーラー）をダウンロードして実行する。
+`v*` タグの push 時に Release へ自動添付される。タグ前でも Actions の `Release` ワークフローの
+成果物 `velink-windows-installer` から取得できる。インストール後はスタートメニューの
+「velink」から起動する。
+
+インストーラーは署名されていないため、初回実行時に Windows SmartScreen の警告が表示される。
+「詳細情報」→「実行」で続行する。
+
+### 接続先の指定
+
+優先順位は次のとおり。
+
+1. コマンドライン引数 `remote ws://host:port/vnc`（ショートカットのリンク先に
+   `"C:\...\velink.exe" remote ws://host:port/vnc` と追記する）
+2. 設定ファイル `%APPDATA%\velink\config.toml`
+
+   ```toml
+   endpoint = "ws://host:port/vnc"
+   ```
+
+3. 上記が無い場合は起動時にコンソールで `velink server URL (ws://host:port/vnc): ` と URL を尋ねる。
+
+引数なし、または `remote` のみで起動した場合も同じ順で解決する。URL が `ws://…/vnc` 形式でなければ
+エラーで終了する。Linux では設定ファイルは `$XDG_CONFIG_HOME/velink/config.toml`
+（未設定なら `~/.config/velink/config.toml`）。
+
+### 注意
+
+- `ws://` は平文で、認証もない。VPN など信頼できる経路でのみ使うこと。
+- キーボードは US 配列を前提とする。
+
+### インストーラーのビルド（開発者向け）
+
+```powershell
+cargo install cargo-packager --locked
+cargo build -p velink-desktop --release --locked
+cargo packager -p velink-desktop --release --formats nsis
+```
