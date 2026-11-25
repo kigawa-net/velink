@@ -1,3 +1,4 @@
+mod endpoint;
 mod remote_client;
 
 use std::process::ExitCode;
@@ -16,20 +17,28 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let Some(browser) = args.next() else {
-        return Err(
-            "usage: velink-desktop <firefox|chromium> <url> | remote <ws://host:8080/vnc>".into(),
-        );
-    };
+    let first = args.next();
+    if first.is_none() || first.as_deref() == Some("remote") {
+        let cli = args.next();
+        if args.next().is_some() {
+            return Err("unexpected extra arguments".into());
+        }
+        let config = endpoint::default_config_path();
+        let stdin = std::io::stdin();
+        let url = endpoint::resolve(
+            cli,
+            config.as_deref(),
+            &mut stdin.lock(),
+            &mut std::io::stdout(),
+        )?;
+        return remote_client::run(&url);
+    }
+    let browser = first.unwrap();
     let Some(url) = args.next() else {
-        return Err("missing URL".into());
+        return Err("missing URL (usage: velink-desktop [remote [ws://host:8080/vnc]] | <firefox|chromium> <url>)".into());
     };
     if args.next().is_some() {
         return Err("unexpected extra arguments".into());
-    }
-
-    if browser == "remote" {
-        return remote_client::run(&url);
     }
 
     let kind = match browser.as_str() {

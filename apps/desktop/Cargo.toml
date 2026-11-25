@@ -10,4 +10,18 @@ velink-core.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
+
+[target.'cfg(unix)'.dependencies]
 minifb = { version = "=0.28.0", default-features = false, features = ["x11"] }
+
+[target.'cfg(windows)'.dependencies]
+minifb = { version = "=0.28.0", default-features = false }
+
+[package.metadata.packager]
+product-name = "velink"
+identifier = "net.kigawa.velink"
+formats = ["nsis"]
+description = "velink remote desktop viewer"
+authors = ["kigawa"]
+out-dir = "dist"
+icons = ["icon.ico"]
