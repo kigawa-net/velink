@@ -284,7 +284,7 @@ kubectl -n velink get endpointslices -l kubernetes.io/service-name=velink-remote
 | `CrashLoopBackOff` / `OOMKilled` | `kubectl logs ... -c desktop --previous` と終了理由を確認し、メモリ上限や解像度を調整する |
 | Xvfb・TigerVNC が起動しない | Dockerfile の依存パッケージと display 番号、デスクトップコマンドを確認する |
 | 接続拒否・タイムアウト | Ready 状態と EndpointSlice、URL のポート、VPN・ファイアウォールを確認する。port-forward で経路を切り分ける |
-| HTTP 404 / ハンドシェイク失敗 | URL を `ws://接続先:ポート/vnc` にする。`http://` や `wss://` はクライアント非対応 |
+| HTTP 404 / ハンドシェイク失敗 | URL を `ws://接続先:ポート/vnc` または `wss://ホスト/vnc` にする。`http://` は非対応。`wss://` は Keycloak ログイン（Device Flow）が必要 |
 | HTTP 409 | 既存のクライアントを閉じてから再接続する |
 | 画面表示が遅い | Raw 形式の転送のため帯域を消費する。解像度を下げて Pod を再作成する |
 | ローカルウィンドウが開かない | Linux の `DISPLAY`、X11/XWayland、X11 ライブラリを確認する |
