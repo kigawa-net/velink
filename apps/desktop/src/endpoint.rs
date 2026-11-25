@@ -5,7 +5,7 @@ use std::{
 };
 use velink_core::remote::RemoteSession;
 
-pub const PROMPT: &str = "velink server URL (ws://host:port/vnc): ";
+pub const PROMPT: &str = "velink server URL (ws://host:port/vnc or wss://host/vnc): ";
 
 fn non_empty(v: Option<&str>) -> Option<&str> {
     v.filter(|s| !s.is_empty())
@@ -86,7 +86,7 @@ pub fn resolve(
         let mut line = String::new();
         let n = input.read_line(&mut line).map_err(|e| e.to_string())?;
         if n == 0 {
-            return Err("no endpoint given (pass `remote <ws://host:port/vnc>`, set `endpoint` in the config file, or enter it at the prompt)".into());
+            return Err("no endpoint given (pass `remote <ws[s]://host/vnc>`, set `endpoint` in the config file, or enter it at the prompt)".into());
         }
         (line.trim().to_owned(), "prompt".to_owned())
     };
@@ -147,6 +147,15 @@ mod tests {
         let p = tmp("bad", "endpoint = \"ws://h:1/other\"\n");
         assert!(run(None, Some(&p), "").is_err());
         assert!(run(None, None, "nonsense\n").is_err());
+    }
+
+    #[test]
+    fn wss_is_accepted_and_http_rejected() {
+        assert_eq!(
+            run(Some("wss://velink.kigawa.net/vnc"), None, "").unwrap(),
+            "wss://velink.kigawa.net/vnc"
+        );
+        assert!(run(Some("https://velink.kigawa.net/vnc"), None, "").is_err());
     }
 
     #[test]

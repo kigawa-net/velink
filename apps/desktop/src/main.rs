@@ -1,3 +1,4 @@
+mod auth;
 mod endpoint;
 mod remote_client;
 
@@ -31,11 +32,25 @@ fn run() -> Result<(), String> {
             &mut stdin.lock(),
             &mut std::io::stdout(),
         )?;
-        return remote_client::run(&url);
+        // Only TLS endpoints are authenticated; ws:// stays unauthenticated (LAN use).
+        let credentials = if url.starts_with("wss://") {
+            let cfg = auth::AuthConfig::from_environment(config.as_deref());
+            let token_path = auth::token_path_from(config)
+                .ok_or("cannot determine the config directory for token.json")?;
+            let access_token =
+                auth::obtain_access_token(&cfg, &token_path, &mut std::io::stdout())?;
+            Some(remote_client::Credentials {
+                access_token,
+                token_path: Some(token_path),
+            })
+        } else {
+            None
+        };
+        return remote_client::run(&url, credentials);
     }
     let browser = first.unwrap();
     let Some(url) = args.next() else {
-        return Err("missing URL (usage: velink-desktop [remote [ws://host:8080/vnc]] | <firefox|chromium> <url>)".into());
+        return Err("missing URL (usage: velink-desktop [remote [ws[s]://host/vnc]] | <firefox|chromium> <url>)".into());
     };
     if args.next().is_some() {
         return Err("unexpected extra arguments".into());

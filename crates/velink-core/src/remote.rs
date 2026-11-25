@@ -15,11 +15,16 @@ pub struct RemoteSession {
 }
 
 impl RemoteSession {
+    /// Whether the endpoint uses TLS (and therefore requires authentication).
+    pub fn is_secure(&self) -> bool {
+        self.endpoint.starts_with("wss://")
+    }
+
     pub fn new(endpoint: impl Into<String>) -> Result<Self, String> {
         let endpoint = endpoint.into();
-        // TLS/authentication are intentionally outside this initial implementation.
-        if !endpoint.starts_with("ws://") || !endpoint.ends_with("/vnc") {
-            return Err("remote endpoint must be ws://host:port/vnc".into());
+        let scheme_ok = endpoint.starts_with("ws://") || endpoint.starts_with("wss://");
+        if !scheme_ok || !endpoint.ends_with("/vnc") {
+            return Err("remote endpoint must be ws://host:port/vnc or wss://host/vnc".into());
         }
         Ok(Self {
             endpoint,
@@ -104,10 +109,18 @@ mod tests {
             RemoteSession::new("ws://localhost:8080/vnc").unwrap().state,
             VncConnectionState::Disconnected
         );
+        let secure = RemoteSession::new("wss://velink.kigawa.net/vnc").unwrap();
+        assert!(secure.is_secure());
+        assert!(
+            !RemoteSession::new("ws://localhost/vnc")
+                .unwrap()
+                .is_secure()
+        );
         for endpoint in [
             "http://localhost/vnc",
+            "https://localhost/vnc",
             "ws://localhost/",
-            "wss://localhost/vnc",
+            "wss://localhost/",
         ] {
             assert!(RemoteSession::new(endpoint).is_err());
         }

@@ -53,8 +53,8 @@ Kubernetes が Pod のコンテナを再起動する。SIGTERM / Ctrl+C で所�
 
 ## 範囲と制約
 
-- 認証・認可・TLS は未実装。Service は ClusterIP のままとし、開発時は
-  `kubectl port-forward` 経由で接続する。公開 Ingress / LoadBalancer は用意しない。
+- サーバー自体に認証・TLS はない。TLS 終端と認証は前段（Ingress + oauth2-proxy）が担う。
+  クラスタ内の Service は ClusterIP のままとし、開発時は `kubectl port-forward` 経由で接続できる。
 - TigerVNC は `127.0.0.1` のみで待受。WebSocket 接続は一度に 1 つ。
 - 解像度は起動時固定。複数セッション、画面サイズ自動変更は未対応。
 - キーボードは US 配列。IME/preedit、クリップボード同期、音声転送は未対応。
@@ -80,7 +80,7 @@ GitHub Release の最新版から `velink_*-setup.exe`（NSIS インストーラ
 
 優先順位は次のとおり。
 
-1. コマンドライン引数 `remote ws://host:port/vnc`（ショートカットのリンク先に
+1. コマンドライン引数 `remote ws://host:port/vnc` または `remote wss://host/vnc`（ショートカットのリンク先に
    `"C:\...\velink.exe" remote ws://host:port/vnc` と追記する）
 2. 設定ファイル `%APPDATA%\velink\config.toml`
 
@@ -88,15 +88,49 @@ GitHub Release の最新版から `velink_*-setup.exe`（NSIS インストーラ
    endpoint = "ws://host:port/vnc"
    ```
 
-3. 上記が無い場合は起動時にコンソールで `velink server URL (ws://host:port/vnc): ` と URL を尋ねる。
+3. 上記が無い場合は起動時にコンソールで `velink server URL (ws://host:port/vnc or wss://host/vnc): ` と URL を尋ねる。
 
-引数なし、または `remote` のみで起動した場合も同じ順で解決する。URL が `ws://…/vnc` 形式でなければ
+引数なし、または `remote` のみで起動した場合も同じ順で解決する。URL が `ws://…/vnc` または `wss://…/vnc` 形式でなければ
 エラーで終了する。Linux では設定ファイルは `$XDG_CONFIG_HOME/velink/config.toml`
 （未設定なら `~/.config/velink/config.toml`）。
 
+### wss:// と Keycloak ログイン（Device Flow）
+
+公開ホスト（例: `wss://velink.kigawa.net/vnc`）には `wss://` で接続する。`wss://` のときだけ
+Keycloak の Device Authorization Grant (RFC 8628) でログインし、WebSocket ハンドシェイクに
+`Authorization: Bearer <access_token>` を付ける。
+
+```sh
+velink remote wss://velink.kigawa.net/vnc
+```
+
+初回手順:
+
+1. 保存済みトークンが無いと、コンソールに URL と `Code: XXXX-XXXX` が表示され、ブラウザが自動で開く。
+   ブラウザが開かない場合は表示された URL を手動で開く。
+2. ブラウザで Keycloak にログインし、表示されたコードを入力（自動入力される場合もある）して承認する。
+3. 承認後、クライアントが自動で接続を続ける。
+
+2 回目以降は保存済みトークンを使い、期限が近いと `refresh_token` で自動更新する。更新に失敗すると
+再ログインする。サーバーが 401/403 を返した場合は保存済みトークンを破棄し、再実行でログインを促す。
+
+トークンの保存先: `%APPDATA%\velink\token.json`（Linux: `$XDG_CONFIG_HOME/velink/token.json`、
+未設定なら `~/.config/velink/token.json`、権限 0600）。`access_token` / `refresh_token` は画面やログに出力しない。
+ログアウトは `token.json` の削除。
+
+Keycloak 設定（public client、`client_secret` は不要。環境変数が設定ファイルより優先）:
+
+| 項目 | 環境変数 | config.toml キー | 既定値 |
+| --- | --- | --- | --- |
+| issuer | `VELINK_ISSUER` | `issuer` | `https://user.kigawa.net/realms/develop` |
+| client_id | `VELINK_CLIENT_ID` | `client_id` | `velink-desktop` |
+| scope | — | `scope` | `openid profile email` |
+
+Keycloak 側でクライアントの OAuth 2.0 Device Authorization Grant を有効にしておくこと。
+
 ### 注意
 
-- `ws://` は平文で、認証もない。VPN など信頼できる経路でのみ使うこと。
+- `ws://` は平文・認証なしで、LAN など信頼できる経路専用。公開ホストには `wss://` を使うこと。
 - キーボードは US 配列を前提とする。
 
 ### インストーラーのビルド（開発者向け）

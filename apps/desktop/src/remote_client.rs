@@ -11,7 +11,11 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::mpsc,
 };
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::{
+    self, Message,
+    client::IntoClientRequest,
+    http::{HeaderValue, header::AUTHORIZATION},
+};
 use velink_core::remote::{RemoteSession, VncConnectionState};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -31,8 +35,44 @@ struct Shared {
 
 type State = Arc<Mutex<Shared>>;
 
-async fn bridge(url: &str, stream: tokio::io::DuplexStream) -> Result<()> {
-    let (ws, _) = tokio_tungstenite::connect_async(url).await?;
+/// Bearer credentials for `wss://` endpoints, plus where the token is stored.
+#[derive(Clone)]
+pub struct Credentials {
+    pub access_token: String,
+    pub token_path: Option<std::path::PathBuf>,
+}
+
+fn rejected_message(status: u16) -> String {
+    format!(
+        "server rejected the access token (HTTP {status}): the token is invalid or expired. \
+         The saved login was discarded; run velink again to log in."
+    )
+}
+
+async fn bridge(
+    url: &str,
+    credentials: Option<Credentials>,
+    stream: tokio::io::DuplexStream,
+) -> Result<()> {
+    let mut request = url.into_client_request()?;
+    if let Some(c) = &credentials {
+        let mut value = HeaderValue::from_str(&format!("Bearer {}", c.access_token))?;
+        value.set_sensitive(true);
+        request.headers_mut().insert(AUTHORIZATION, value);
+    }
+    let (ws, _) = match tokio_tungstenite::connect_async(request).await {
+        Ok(ok) => ok,
+        Err(tungstenite::Error::Http(response))
+            if matches!(response.status().as_u16(), 401 | 403) =>
+        {
+            let status = response.status().as_u16();
+            if let Some(path) = credentials.as_ref().and_then(|c| c.token_path.as_ref()) {
+                crate::auth::forget_token(path);
+            }
+            return Err(rejected_message(status).into());
+        }
+        Err(e) => return Err(e.into()),
+    };
     let (mut sink, mut source) = ws.split();
     let (mut read, mut write) = tokio::io::split(stream);
     let incoming = async {
@@ -190,12 +230,13 @@ async fn read_updates<R: AsyncRead + Unpin>(
 
 async fn protocol(
     url: String,
+    credentials: Option<Credentials>,
     state: State,
     mut input: mpsc::Receiver<Vec<u8>>,
     requests: mpsc::Sender<Vec<u8>>,
 ) -> Result<()> {
     let (mut stream, transport) = tokio::io::duplex(256 * 1024);
-    let bridge = bridge(&url, transport);
+    let bridge = bridge(&url, credentials, transport);
     let viewer = async {
         let frame = tokio::time::timeout(Duration::from_secs(15), handshake(&mut stream)).await??;
         {
@@ -319,7 +360,7 @@ fn keysym(key: Key, shift: bool) -> Option<u32> {
     })
 }
 
-pub fn run(endpoint: &str) -> std::result::Result<(), String> {
+pub fn run(endpoint: &str, credentials: Option<Credentials>) -> std::result::Result<(), String> {
     let mut session = RemoteSession::new(endpoint)?;
     session.state = VncConnectionState::Connecting;
     let state = Arc::new(Mutex::new(Shared {
@@ -332,7 +373,14 @@ pub fn run(endpoint: &str) -> std::result::Result<(), String> {
     let worker_send = send.clone();
     let endpoint = endpoint.to_owned();
     let task = runtime.spawn(async move {
-        let result = protocol(endpoint, worker_state.clone(), receive, worker_send).await;
+        let result = protocol(
+            endpoint,
+            credentials,
+            worker_state.clone(),
+            receive,
+            worker_send,
+        )
+        .await;
         worker_state.lock().unwrap().session.state = match result {
             Ok(()) => VncConnectionState::Disconnected,
             Err(error) => VncConnectionState::Failed(error.to_string()),
@@ -499,6 +547,12 @@ mod tests {
         assert!(read_updates(client, state.clone(), send).await.is_err()); // peer closes
         assert_eq!(state.lock().unwrap().frame.pixels, [0x112233, 0x445566]);
         fake.await.unwrap();
+    }
+
+    #[test]
+    fn rejection_message_prompts_relogin() {
+        let m = rejected_message(401);
+        assert!(m.contains("401") && m.contains("log in"));
     }
 
     #[test]
